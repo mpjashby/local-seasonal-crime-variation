@@ -1,0 +1,68 @@
+---
+title: "02 Data preparation"
+output: html_notebook
+---
+
+
+# Load CODE crime data
+
+```{r}
+crimes <- dir("../original_data", pattern = "_core_", full.names = TRUE) %>% 
+  map(read_csv, col_types = cols(
+    .default = col_character(),
+    uid = col_integer(),
+    date_single = col_datetime(format = ""),
+    date_start = col_datetime(format = ""),
+    date_end = col_datetime(format = ""),
+    longitude = col_double(),
+    latitude = col_double()
+  )) %>% 
+  bind_rows() %>% 
+  # Virginia Beach data is only available for four years, so is excluded
+  filter(city_name != "Virginia Beach") %>% 
+  # not all fields are needed, so some a excluded to save memory
+  select(city_name, offense_code, offense_type, offense_group, offense_against, 
+         date_single, date_start, date_end, longitude, latitude, location_type, 
+         location_category, fips_state, fips_county, tract, block_group, block)
+
+crimes %>% 
+  mutate(year = year(date_single)) %>% 
+  group_by(city_name, year) %>% 
+  summarise(n = n()) %>% 
+  spread(year, n)
+```
+
+
+# Create circular representations of dates
+
+Circular statistics require dates to be represented as angles showing the 
+position of that date within a larger unit. For example, an angle could show
+how far through the year, week, day etc a date/time combination falls. Since
+we're interested in seasonal variations, we will represent dates as an angle
+relative to a year.
+
+```{r}
+crimes <- crimes %>% 
+  mutate(
+    year_mins = difftime(ceiling_date(date_single, unit = "year", 
+                                      change_on_boundary = TRUE), 
+                         floor_date(date_single, unit = "year"), 
+                         units = "mins"),
+    crime_mins = difftime(date_single, floor_date(date_single, unit = "year"), 
+                          units = "mins"),
+    prop_year = as.numeric(crime_mins) / as.numeric(year_mins)
+  ) %>% 
+  select(-year_mins, -crime_mins)
+```
+
+We can quickly check the results of this calculation using a histogram of
+daily crime counts (this is for all crime and should be interpreted with 
+caution):
+
+```{r}
+ggplot(crimes) + 
+  geom_histogram(aes(prop_year), bins = 365) + 
+  facet_wrap(facets = vars(city_name), scales = "free")
+```
+
+

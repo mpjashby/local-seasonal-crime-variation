@@ -32,5 +32,16 @@ vignettes/*.pdf
 *.utf8.md
 *.knit.md
 
+# R markdown HTML output documents
+# (these are automatically created whenever a notebook is saved, but can't be
+# displayed inline by GitHub, whereas .rmd files can)
+*.nb.html
+
 # Shiny token, see https://shiny.rstudio.com/articles/shinyapps.html
 rsconnect/
+.Rproj.user
+
+# Original data files, which are too large to store on GitHub and are in any
+# case all available online
+/original_data/
+
