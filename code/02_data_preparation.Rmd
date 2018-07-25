@@ -44,15 +44,25 @@ relative to a year.
 ```{r}
 crimes <- crimes %>% 
   mutate(
+    offense = case_when(
+      offense_code %in% c("12A") ~ "personal robbery",
+      offense_code %in% c("13A", "13B") ~ "assault",
+      offense_code %in% c("22A") ~ "residential burglary",
+      offense_code %in% c("290") ~ "criminal damage",
+      TRUE ~ NA_character_
+    ),
+    year = year(date_single),
     year_mins = difftime(ceiling_date(date_single, unit = "year", 
                                       change_on_boundary = TRUE), 
                          floor_date(date_single, unit = "year"), 
                          units = "mins"),
     crime_mins = difftime(date_single, floor_date(date_single, unit = "year"), 
                           units = "mins"),
-    prop_year = as.numeric(crime_mins) / as.numeric(year_mins)
+    year_angle = (as.numeric(crime_mins) / as.numeric(year_mins)) * 360
   ) %>% 
-  select(-year_mins, -crime_mins)
+  filter(!is.na(offense)) %>% 
+  select(-year_mins, -crime_mins, -offense_against, -offense_type, 
+         -offense_group)
 ```
 
 We can quickly check the results of this calculation using a histogram of
@@ -61,8 +71,9 @@ caution):
 
 ```{r}
 ggplot(crimes) + 
-  geom_histogram(aes(prop_year), bins = 365) + 
-  facet_wrap(facets = vars(city_name), scales = "free")
+  geom_histogram(aes(year_angle), bins = 365) + 
+  facet_wrap(facets = vars(city_name), scales = "free") +
+  theme_minimal()
 ```
 
 

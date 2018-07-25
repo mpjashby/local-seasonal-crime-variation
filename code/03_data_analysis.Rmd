@@ -1,0 +1,280 @@
+---
+title: "03 Data analysis"
+output: html_notebook
+---
+
+
+This file assumes that files `01_packages_and_functions.Rmd` and 
+`02_data_prepration.Rmd` have already been run, so that the global environment
+contains a tibble of crime data.
+
+
+# Are seasonal trends each each city consistent across years?
+
+Seasonal analysis often aggregates data from multiple years, and this study 
+seeks to do the same. However, this approach is only valid if the seasonal
+pattern is the same across years. These tests seek to determine if this 
+assumption is valid.
+
+```{r}
+crimes %>% 
+  filter(!offense %in% c("theft from the person", "theft of motor vehicle")) %>% 
+  split(.$offense) %>% 
+  # head(1) %>% 
+  lapply(function (x) {
+    x %>% split(.$city_name) %>% 
+      lapply(function (y) {
+        z <- split(y$year_angle, y$year) %>% 
+          lapply(circular_clock)
+        medians <- sapply(z, quantile.circular, probs = c(0.50)) %>% 
+          abs_circular()
+        # plot(medians, main = paste(first(x$offense), "in", first(y$city_name)), 
+        #      ylim = c(0, 360))
+        concentrations <- sapply(z, circular_concentration)
+        # calculate range of annual median values here
+        watson.wheeler.test(z) %>% 
+          tidy() %>% 
+          mutate(
+            type = first(x$offense), 
+            city = first(y$city_name),
+            median_length = median(sapply(z, length)),
+            median_day = angle_to_day(median(medians)),
+            median_range = paste(
+              round(((max(medians) - min(medians)) / 360) * 365), 
+              "days"
+            ),
+            median_conc = median(concentrations)
+          ) %>% 
+          select(type, city, median_length, median_day, median_range, 
+                 median_conc, statistic, p = p.value)
+      }) %>% 
+      bind_rows()
+  }) %>% 
+  bind_rows() %>% 
+  mutate(
+    median_length = round(median_length),
+    median_conc = round(median_conc, digits = 3),
+    p_adj = p.adjust(p, "hochberg")
+  ) %>% 
+  mutate_at(vars(one_of("statistic")), round, 
+            digits = 1) %>% 
+  mutate_if(str_detect(colnames(.), "^p"), 
+            ~ifelse(. < 0.001, "< 0.001", as.character(round(., digits = 3))))
+```
+
+
+# Are seasonal patterns of crime consistent across cities?
+
+We can generate some summary statistics to see if there are differences between
+the seasonal distributions of crimes in each CODE city.
+
+```{r}
+city_summary <- crimes %>% 
+  # filter(city_name == "Fort Worth") %>% 
+  split(.$offense) %>% 
+  lapply(function (x) {
+    cat("\n\nPROCESSING", str_to_upper(first(x$offense)), "\n")
+    
+    split(x, x$city_name) %>% 
+      lapply(function (y) {
+        cat("\tfor", first(y$city_name), "\n")
+      
+        # create a circular object of dates represented as angles
+        z <- circular_clock(y$year_angle)
+        
+        # conduct 10 Rayleigh tests (because the test breaks ties at random)
+        # and take the mean values
+        rayleigh <- map_df(1:20, ~rayleigh.test(z)[1:2]) %>% 
+          summarise_all(mean)
+        
+        # construct a tibble of statistics
+        tibble(
+          offenses = nrow(y),
+          rayleigh_stat = rayleigh$statistic,
+          rayleigh_p = rayleigh$p.value,
+          median_angle = median.circular(z) %>% 
+            abs_circular(),
+          median_day = angle_to_day(median_angle),
+          mean_deviation = meandeviation(z),
+          concentration = circular_concentration(z),
+          seasonal_range = seasonal_range(y$date_single, period = "V")
+        )
+        
+      }) %>% 
+      bind_rows(.id = "city")
+  }) %>% 
+  bind_rows(.id = "offense") %>% 
+  mutate(
+    rayleigh_p = format_p(p.adjust(rayleigh_p))
+  ) %>%
+  write_csv("../analysis_data/city_summary.csv", na = "")
+
+city_summary %>% 
+  mutate_if(is.integer, format, big.mark = ",") %>% 
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+The Rayleigh statistics show that in all cases there is significant seasonal
+variation in the data, although the concentration and seasonal-range values
+suggest this variation is relatively small.
+
+We can plot these results to see that assault and criminal damage are 
+concentrated in the summer, robbery in the late summer and burglary in the 
+autumn and winter.
+
+```{r}
+city_summary %>% 
+  ggplot(aes(x = (median_angle / 360) * 365, y = concentration, label = str_sub(city, 0, 3))) +
+  # geom_hline(yintercept = 1, colour = "grey70") +
+  geom_point() +
+  geom_text_repel() +
+  facet_wrap(facets = "offense") +
+  coord_polar() +
+  scale_x_continuous(
+    breaks = c(31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365),
+    label = c("J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"),
+    limits = c(0, 365)
+  ) +
+  scale_y_continuous(
+    limits = c(0, NA)
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    # axis.line.y = element_blank(),
+    # axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+We can also see that the differences in concentration between cities are greater 
+than the differences between crime types.
+
+```{r}
+city_summary %>% 
+  ggplot(aes(
+    x = offense, 
+    y = concentration, 
+    group = city, 
+    label = ifelse(.$offense %in% c(first(.$offense), last(.$offense)), 
+                   paste(str_sub(city, 0, 3), " "), "")
+  )) + 
+  geom_line() + 
+  geom_point() + 
+  geom_text(hjust = "right") + 
+  lims(y = c(0, NA)) + 
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+```
+
+In each case, these differences between crime types are significant.
+
+```{r}
+crimes %>% 
+  split(.$offense) %>% 
+  map_df(function (x) {
+
+    y <- split(x$year_angle, x$city_name) %>% 
+      map(circular_clock) 
+    
+    # we run the WW test 20 times because it breaks ties at random
+    map_df(1:20, ~tidy(watson.wheeler.test(y))) %>% 
+      summarise_if(is.numeric, mean)
+      # watson.wheeler.test(z) %>%
+      # tidy() %>% 
+      
+
+  }, .id = "offense") %>% 
+  mutate(p.value = format_p(p.adjust(p.value))) %>%
+  rename(p_value = p.value)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+crimes %>% 
+  split(.$offense) %>% 
+  head(1) %>% 
+  lapply(function (x) {
+    
+    cat("\nProcessing", first(x$offense), "\n")
+    y <- split(x$year_angle, x$city_name) %>% 
+      lapply(circular_clock)
+    cat("\tcreated list of circular objects\n")
+    
+    medians <- y %>% 
+      sapply(function (z) {
+        median.circular(ifelse(length(z) > 10000, sample(z, 10000), z))
+      }) %>%
+      abs_circular()
+    cat("\tcalculated medians\n")
+    
+    concentrations <- sapply(y, function(z) {
+      circular_concentration(ifelse(length(z) > 10000, sample(z, 10000), z))
+    })
+    cat("\tcalculated concentrations\n")
+    
+    watson.wheeler.test(y) %>%
+      tidy() %>%
+      mutate(
+        type = first(x$offense),
+        median_length = median(sapply(y, length)),
+        median_day = angle_to_day(median(medians)),
+        median_range = paste(
+          round(((max(medians) - min(medians)) / 360) * 365),
+          "days"
+        ),
+        median_conc = median(concentrations)
+      ) %>%
+      select(type, median_length, median_day, median_range, median_conc,
+             statistic, p = p.value)
+
+  }) %>%
+  bind_rows() %>%
+  mutate(
+    median_length = round(median_length),
+    median_conc = round(median_conc, digits = 3),
+    statistic = round(statistic, digits = 1),
+    p_adj = p.adjust(p, "hochberg")
+  ) %>%
+  mutate_if(str_detect(colnames(.), "^p"),
+            ~ifelse(. < 0.001, "< 0.001", as.character(round(., digits = 3))))
+```
+
+```{r}
+crimes %>% 
+  filter(offense == "personal robbery") %>% 
+  { split(.$year_angle, .$city_name) } %>% 
+  lapply(function (x) {
+    circular_clock(x) %>% 
+      density.circular(bw = bw.nrd.circular(.), adjust = 10) %>% 
+      { tibble(x = .$x, y = .$y) }
+  }) %>% 
+  bind_rows(.id = "city") %>% 
+  mutate(x_abs = abs_circular(x)) %>% 
+  # sample_n(50) %>% View()
+  ggplot(aes(x = x_abs, y = y)) +
+  geom_line() +
+  coord_polar() +
+  facet_wrap(vars(city)) +
+  theme_minimal()
+
+```
+

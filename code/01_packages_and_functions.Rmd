@@ -10,11 +10,11 @@ easily reloaded after a restart.
 
 ```{r}
 # circular statistics
-# CircStats (which requires MASS) must be loaded before tidyverse because
-# otherwise MASS::select() will mask dplyr::select()
-library("CircStats")
+library("circular")
 # tidyverse loads dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr
 library("tidyverse")
+# repelling labels in ggplot2
+library("ggrepel")
 # date processing
 library("lubridate")
 # tidy model results
@@ -23,4 +23,170 @@ library("broom")
 
 
 # Functions
+
+## Format a p value
+
+```{r}
+format_p <- function (p) {
+  ifelse(p < 0.001, "<0.001", sprintf("%3.3f", p))
+}
+```
+
+
+## Sample vector only if long enough
+
+`sample_n()` throws an error if the table to be sampled from has fewer rows than
+the value specified for n. This function deals with that by only sampling 
+tables that are longer than the required sample size, otherwise returning the
+table unchanged. The same behaviour is provided for vectors, which sample_n
+does not handle.
+
+```{r}
+sample_if <- function (x, n) {
+  
+  if (is.atomic(x)) {
+    
+    # vector
+    if (length(x) > n) {
+      sample(x, n)
+    } else {
+      x
+    }
+    
+  } else {
+    
+    # table
+    if (nrow(x) > n) {
+      sample_n(x, n)
+    } else {
+      x
+    }
+    
+  }
+}
+```
+
+
+
+## Convert vector of time angles to circular object
+
+This function takes a vector of angles, i.e. numeric values between 0 and 360
+degrees, and converts them into a circular object with appropriate attributes.
+
+```{r}
+circular_clock <- function (x) {
+  if (!is.numeric(x)) {
+    stop("x must be numeric, not of class ", class(x))
+  }
+  circular(x, units = "degrees", zero = pi / 2, rotation = "clock")
+}
+```
+
+
+## Convert negative angles to their positive equivalents
+
+This function takes a numeric vector of angles and replaces those that are
+negative with the appropriate positive value. For example, -90º is the same
+angle as +270º.
+
+```{r}
+abs_circular <- function (x) {
+  if (!is.numeric(x)) {
+    stop("x must be numeric, not of class ", class(x))
+  }
+  ifelse(x < 0, x + 360, x)
+}
+```
+
+
+## Calculate circular concentration
+
+```{r}
+circular_concentration <- function (x) {
+  quantile.circular(x, probs = c(0.25, 0.75)) %>% 
+    abs_circular() %>% 
+    { ifelse(.[2] > .[1], .[2] - .[1], .[1] - .[2]) } %>% 
+    { 1 - ((ifelse(. > 180, 360 - ., .) / 360) / 0.5) }
+    # { 1 - ((ifelse(.[2] - .[1] > 180, 360 - (.[2] - .[1]), .) / 360) / 0.5) }
+}
+```
+
+
+## Calculate seasonal range
+
+This function accepts a vector of date objects and calculates the 10% trimmed
+range of the daily/weekly/monthly count of offenses, or the range excluding the
+minimum and maximum values if there are fewer than 10 periods.
+
+```{r}
+seasonal_range <- function (
+  x, # a vector of date objects
+  period, # the period over which offenses should be counted
+  ratio = TRUE, # whether to return the result divided by the median period count
+  edges = "exclude" # how edges should be dealt with if period = "weeks"
+) {
+  
+  # check arguments
+  if (!is.POSIXt(x) & !is.Date(x)) {
+    stop("x must be a Date, POSIXct or POSIXlt, not of class ", class(x))
+  }
+  if (!edges %in% c("exclude", "combine")) {
+    stop("edges must be one of 'exclude' (the default) or 'combine'")
+  }
+  
+  # if period is a single letter, convert it into a format code
+  if (length(period) == 1 & period %in% c(letters, LETTERS)) {
+    period <- paste0("%", period)
+  }
+  
+  # calculate offense counts
+  y <- tibble(date = x) %>% 
+    mutate(date_part = format(date, format = period)) %>% 
+    group_by(date_part) %>% 
+    summarise(n = n())
+  
+  # deal with edges in weeks
+  if (period %in% c("%U", "%V", "%W")) {
+    if (edges == "exclude") {
+      y <- filter(y, !date_part %in% c("00", "53"))
+    } else if (edges == "combine") {
+      y <- mutate(y, date_part = case_when(
+        date_part == "53" ~ "01",
+        date_part == "00" ~ "52",
+        TRUE ~ date_part
+      ))
+    }
+  }
+
+  # calculate min and max
+  if (nrow(y) == 1) {
+    stop("all the values of x are contained in a single period so a range ",
+         "cannot be calculated")
+  } else if (nrow(y) < 10) {
+    z <- y %>% arrange(n) %>% slice(2:(nrow(.) - 1)) %>% { range(.$n) }
+  } else {
+    z <- quantile(y$n, probs = c(0.1, 0.9))
+  }
+  
+  # calculate range
+  if (ratio == TRUE) {
+    as.numeric(z[2] - z[1]) / median(y$n)
+  } else {
+    as.numeric(z[2] - z[1])
+  }
+  
+}
+```
+
+
+## Angle to date
+
+```{r}
+angle_to_day <- function (x, format = "%d %b") {
+  floor((x / 360) * 365.25) %>% 
+    as.Date(origin = "2010-01-01") %>% 
+    as.character(format = format)
+}
+```
+
 
