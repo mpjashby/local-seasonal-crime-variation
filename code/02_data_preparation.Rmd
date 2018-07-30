@@ -21,9 +21,10 @@ crimes <- dir("../original_data", pattern = "_core_", full.names = TRUE) %>%
   # Virginia Beach data is only available for four years, so is excluded
   filter(city_name != "Virginia Beach") %>% 
   # not all fields are needed, so some a excluded to save memory
-  select(city_name, offense_code, offense_type, offense_group, offense_against, 
-         date_single, date_start, date_end, longitude, latitude, location_type, 
-         location_category, fips_state, fips_county, tract, block_group, block)
+  select(uid, city_name, offense_code, offense_type, offense_group, 
+         offense_against, date_single, date_start, date_end, longitude, latitude, 
+         location_type, location_category, fips_state, fips_county, tract, 
+         block_group, block)
 
 crimes %>% 
   mutate(year = year(date_single)) %>% 
@@ -85,7 +86,7 @@ Zillow data are provided as shapefiles. For ease of manipulation, we can first
 convert those shapefiles to geopackages. This only needs to be done once or when
 the Zillow data has changed.
 
-```{r}
+```{r message=FALSE, warning=TRUE, include=FALSE}
 walk(
   dir("../original_data", pattern = "^Zillow.+\\.zip", full.names = TRUE), 
   function (x) {
@@ -170,16 +171,22 @@ crimes <- crimes %>%
   st_as_sf(coords = c("longitude", "latitude"), crs = 4326, remove = FALSE) %>% 
   # join the neighbourhood names (but no other information) to the crimes
   st_join(select(nbhd, neighborhood)) %>% 
+  # convert the SF object back to a standard data frame and convert that to a
+  # tibble, thereby restoring crimes to its original class
+  st_set_geometry(NULL) %>% 
+  as_tibble() %>% 
+  # remove duplicate rows introduced by st_join() when points fall on the
+  # boundary between two neighbourhoods (note summarise_all() does not work on
+  # SF objects, so this must be done after the conversion to tibble)
+  group_by(uid) %>% 
+  summarise_all(first) %>% 
+  ungroup() %>% 
   # remove neighbourhood value for cities that are not completely or largely
   # covered by neighbourhoods
   mutate(neighborhood = case_when(
     !city_name %in% c("Chicago", "Los Angeles", "Louisville", "New York",
                  "San Francisco", "Virginia Beach") ~ NA_character_,
     TRUE ~ neighborhood
-  )) %>% 
-  # convert the SF object back to a standard data frame and convert that to a
-  # tibble, thereby restoring crimes to its original class
-  st_set_geometry(NULL) %>% 
-  as_tibble()
+  ))
 ```
 
