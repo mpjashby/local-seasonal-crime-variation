@@ -172,7 +172,8 @@ city_summary %>%
   )
 ```
 
-In each case, these differences between crime types are significant.
+In each case, these differences between patterns across cities are significant
+for all crime types.
 
 ```{r}
 crimes %>% 
@@ -194,9 +195,26 @@ crimes %>%
   rename(p_value = p.value)
 ```
 
+We can quantify these differences by calculating the range of median days
+across cities for each crime type:
+
+```{r}
+city_summary %>% 
+  group_by(offense) %>% 
+  summarise(
+    range_min = min(median_angle),
+    range_max = max(median_angle),
+    range_days = angle_to_days(ifelse(
+      range_max - range_min > 180,
+      360 - (range_max - range_min),
+      range_max - range_min
+    ))
+  ) %>% 
+  select(-range_min, -range_max)
+```
 
 
-
+# Are seasonal variations in crime consistent within cities?
 
 
 

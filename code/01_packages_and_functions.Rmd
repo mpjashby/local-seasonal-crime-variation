@@ -11,6 +11,8 @@ easily reloaded after a restart.
 ```{r}
 # circular statistics
 library("circular")
+# spatial processing
+library("sf")
 # tidyverse loads dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr
 library("tidyverse")
 # repelling labels in ggplot2
@@ -20,6 +22,26 @@ library("lubridate")
 # tidy model results
 library("broom")
 ```
+
+
+# Parameters
+
+```{r}
+cities <- tribble(
+  ~name, ~fips, ~prefix,
+  "Chicago",        "17", "chi",
+  "Detroit",        "26", "dtt",
+  "Fort Worth",     "48", "ftw",
+  "Kansas City",    "29", "kcm",
+  "Los Angeles",    "06", "lax",
+  "Louisville",     "21", "lou",
+  "New York",       "36", "nyc",
+  "San Francisco",  "06", "sfo",
+  "Tucson",         "04", "tus",
+  "Virginia Beach", "51", "vib"
+)
+```
+
 
 
 # Functions
@@ -65,7 +87,6 @@ sample_if <- function (x, n) {
   }
 }
 ```
-
 
 
 ## Convert vector of time angles to circular object
@@ -186,6 +207,15 @@ angle_to_day <- function (x, format = "%d %b") {
   floor((x / 360) * 365.25) %>% 
     as.Date(origin = "2010-01-01") %>% 
     as.character(format = format)
+}
+```
+
+
+## Angle to number of days
+
+```{r}
+angle_to_days <- function (x) {
+  round((x / 360) * 365.25)
 }
 ```
 

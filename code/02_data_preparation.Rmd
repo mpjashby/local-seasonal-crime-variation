@@ -77,3 +77,109 @@ ggplot(crimes) +
 ```
 
 
+# Identify neighbourhoods by clustering
+
+## Convert shapefiles to geopackages
+
+Zillow data are provided as shapefiles. For ease of manipulation, we can first
+convert those shapefiles to geopackages. This only needs to be done once or when
+the Zillow data has changed.
+
+```{r}
+walk(
+  dir("../original_data", pattern = "^Zillow.+\\.zip", full.names = TRUE), 
+  function (x) {
+    
+    # unzip shapefiles to temporary directory
+    unzip(x, exdir = tempdir())
+    
+    # set file names
+    input_file <- paste0(tempdir(), str_extract(x, "\\/[^\\/]+$")) %>% 
+      str_replace("\\.zip$", ".shp")
+    output_file <- str_replace(x, "\\.zip$", ".gpkg") %>% 
+      str_replace("\\/original_data\\/", "/analysis_data/")
+    cat(input_file, "\n", output_file, "\n")
+    
+    # save shapefile as geopackage
+    st_read(input_file) %>%
+      st_write(output_file)
+    
+    # remove temporary files
+    dir(tempdir(), pattern = "^Zillow", full.names = TRUE) %>% 
+      file.remove()
+  }
+)
+```
+
+
+## Extract neighbourhoods for CODE cities
+
+```{r}
+nbhd <- dir("../analysis_data", pattern = "^Zillow.+\\.gpkg", 
+            full.names = TRUE) %>% 
+  map_df(st_read, stringsAsFactors = FALSE) %>% 
+  rename_all(str_to_lower) %>%
+  rename(geometry = geom, neighborhood = name) %>%
+  filter(city %in% c("Chicago", "Detroit", "Fort Worth", "Kansas City",
+                     "Los Angeles", "Louisville", "New York", "San Francisco",
+                     "Tucson", "Virginia Beach")) %>%
+  st_set_crs(4326) %>% 
+  mutate_at(vars(one_of("state", "county", "city", "neighborhood", "regionid")), 
+            as.character)
+```
+
+Not all areas are covered by Zillow neighbourhoods. The quickest way to check is
+to produce maps of the neighbourhoods in each city.
+
+```{r}
+base::split(nbhd, as.factor(nbhd$city)) %>% walk(function (x) {
+  this_outline <- tigris::places(cities$fips[cities$name == first(x$city)], 
+                                 cb = TRUE, class = "sf") %>% 
+    filter(NAME == first(x$city))
+  this_plot <- ggplot(x) + 
+    geom_sf(data = this_outline, colour = NA, fill = "grey80") +
+    geom_sf(aes(fill = neighborhood), show.legend = FALSE) +
+    geom_sf(data = this_outline, colour = "black", fill = NA, linetype = 3) +
+    labs(title = paste(first(x$city), "neighborhoods")) +
+    theme_minimal()
+  ggsave(paste0("../output/", first(x$city), " neighborhoods.pdf"), this_plot)
+})
+```
+
+All of Chicago, Los Angeles, New York and San Francisco, and almost all of 
+Lousville and Virginia Beach are covered by Zillow neighbourhoods, so they can
+be used for neighbourhood-level analysis.
+
+```{r}
+nbhd %>% 
+  as_tibble() %>% 
+  filter(city %in% c("Chicago", "Los Angeles", "Louisville", "New York",
+                     "San Francisco", "Virginia Beach")) %>% 
+  group_by(city) %>% 
+  summarise(n = n()) %>%
+  add_row(city = "Total", n = sum(.$n))
+```
+
+
+## Join Zillow neighbourhoods to crime data
+
+```{r}
+crimes <- crimes %>% 
+  # convert the crimes object to an SF object, preserving the original lat and 
+  # lon columns
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, remove = FALSE) %>% 
+  # join the neighbourhood names (but no other information) to the crimes
+  st_join(select(nbhd, neighborhood)) %>% 
+  # remove neighbourhood value for cities that are not completely or largely
+  # covered by neighbourhoods
+  mutate(neighborhood = case_when(
+    !city_name %in% c("Chicago", "Los Angeles", "Louisville", "New York",
+                 "San Francisco", "Virginia Beach") ~ NA_character_,
+    TRUE ~ neighborhood
+  )) %>% 
+  # convert the SF object back to a standard data frame and convert that to a
+  # tibble, thereby restoring crimes to its original class
+  st_set_geometry(NULL) %>% 
+  as_tibble()
+```
+

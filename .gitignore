@@ -45,3 +45,8 @@ rsconnect/
 # case all available online
 /original_data/
 
+# Analysis data, which are too big for GitHub
+/analysis_data/
+
+
+
